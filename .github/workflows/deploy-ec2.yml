@@ -1,51 +1,30 @@
 
-name: Deploy to EC2 (K8s, Laravel, Monitoring)
+name: Deploy to EC2
 
 on:
-  workflow_dispatch:  # Manual trigger
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Set up SSH key
+      - name: Add EC2 host key
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H ${{ secrets.EC2_PUBLIC_IP }} >> ~/.ssh/known_hosts
 
-      - name: Deploy K8s, Laravel, Monitoring
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: Deploy on EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
-            # Update packages
-            sudo apt-get update -y
-
-            # Navigate to project folder or clone repo
-            cd /home/ubuntu/app || git clone https://github.com/ghassan8080/DevOps-Pipeline-Monitoring.git app && cd app
-
-            # K8s Deployment (if you have manifests)
-            if [ -d "k8s" ]; then
-              kubectl apply -f k8s/
-            fi
-
-            # Laravel setup
-            if [ -d "laravel-app" ]; then
-              cd laravel-app
-              composer install
-              php artisan migrate --force
-              php artisan config:cache
-              cd ..
-            fi
-
-            # Monitoring setup (e.g., Prometheus/Grafana scripts)
-            if [ -d "monitoring" ]; then
-              cd monitoring
-              ./deploy-monitoring.sh
-              cd ..
-            fi
-          EOF
+          ssh ec2-user@${{ secrets.EC2_PUBLIC_IP }} "
+            cd /home/ec2-user/app &&
+            git pull &&
+            docker-compose up -d --build
+          "
