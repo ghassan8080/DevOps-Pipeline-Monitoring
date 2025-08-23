@@ -1,0 +1,8 @@
+region = "us-east-1"
+
+
+ami = "ami-0360c520857e3138f" # Ubuntu AMI ID
+
+
+
+public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQC5FcWUdT3dK/BnqcpWATMGKfFZcIS6Zm7JLmlPUJ7c0Iih94mGVwgBKpBiGkt6Cc0OAlTfatE6YoDdUbjrKXBWHZd92Wez9X+G466V6GjJ7sjldEtF/nUttEflL6G+GVxOzL2Ca+WbBdKwDGWVDyOKjqOx10zkcWTAv4/Ac5VoaN2zq72O0bMbtLd33NY6NbklYBnoS0eOtGWVtzEb600Q0WKDufAMfXN6j42t+FOMWVwquqd6YprbCIShCUIWlH2L1295jsqafMJfz7MyJBnMxiEEWalC9FC3fRCq9PgJcj2u+BJ4gCkUu0aEBofb+X2MfIvrqRO5OaTktAxjUunt ghassan@Ghassan"
