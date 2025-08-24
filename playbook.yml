@@ -1,0 +1,109 @@
+---
+- name: Setup EC2 Environment
+  hosts: all
+  become: yes
+  vars:
+    docker_version: "24.0.5"
+    kubectl_version: "1.27.4"
+    php_version: "8.2"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - apt-transport-https
+        - ca-certificates
+        - curl
+        - software-properties-common
+        - python3-pip
+        - git
+
+    - name: Add Docker GPG key
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+
+    - name: Install Docker
+      apt:
+        name: "docker-ce={{ docker_version }}*"
+        state: present
+        update_cache: yes
+
+    - name: Start Docker service
+      service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add Kubernetes GPG key
+      apt_key:
+        url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+        state: present
+
+    - name: Add Kubernetes repository
+      apt_repository:
+        repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+        state: present
+
+    - name: Install kubectl
+      apt:
+        name: "kubectl={{ kubectl_version }}-00"
+        state: present
+        update_cache: yes
+
+    - name: Add PHP repository
+      apt_repository:
+        repo: ppa:ondrej/php
+        state: present
+
+    - name: Install PHP and extensions
+      apt:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - "php{{ php_version }}"
+        - "php{{ php_version }}-fpm"
+        - "php{{ php_version }}-cli"
+        - "php{{ php_version }}-mysql"
+        - "php{{ php_version }}-mbstring"
+        - "php{{ php_version }}-xml"
+        - "php{{ php_version }}-curl"
+        - "php{{ php_version }}-zip"
+
+    - name: Install Composer
+      shell: |
+        curl -sS https://getcomposer.org/installer | php
+        mv composer.phar /usr/local/bin/composer
+        chmod +x /usr/local/bin/composer
+
+    - name: Create Laravel storage directory
+      file:
+        path: /var/www/html/storage
+        state: directory
+        mode: '0775'
+        owner: www-data
+        group: www-data
+
+    - name: Configure PHP-FPM
+      template:
+        src: php-fpm.conf.j2
+        dest: /etc/php/{{ php_version }}/fpm/php-fpm.conf
+      notify: restart php-fpm
+
+  handlers:
+    - name: restart php-fpm
+      service:
+        name: "php{{ php_version }}-fpm"
+        state: restarted

@@ -1,0 +1,105 @@
+name: Deploy to EC2 (K8s, Laravel, Monitoring)
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Manual trigger
+
+env:
+  KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+  DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_PUBLIC_IP }} >> ~/.ssh/known_hosts
+
+      - name: Install Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible
+
+      - name: Run Ansible Playbook for Environment Setup
+        run: |
+          ansible-playbook -i "${{ secrets.EC2_PUBLIC_IP }}," --private-key ~/.ssh/id_rsa playbook.yml -u ubuntu
+
+      - name: Login to Docker Registry
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login ${{ env.DOCKER_REGISTRY }} -u ${{ secrets.DOCKER_USERNAME }} --password-stdin
+
+      - name: Build and Push Laravel Docker Image
+        working-directory: ./laravel-app
+        run: |
+          docker build -t ${{ env.DOCKER_REGISTRY }}/laravel-app:${{ github.sha }} .
+          docker push ${{ env.DOCKER_REGISTRY }}/laravel-app:${{ github.sha }}
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_PUBLIC_IP }} << 'EOF'
+            set -e  # Exit on any error
+            
+            # Setup kubeconfig
+            mkdir -p ~/.kube
+            echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
+            chmod 600 ~/.kube/config
+            
+            # Update repository
+            cd /home/ubuntu/app || git clone https://github.com/ghassan8080/DevOps-Pipeline-Monitoring.git /home/ubuntu/app
+            cd /home/ubuntu/app
+            git pull origin main
+
+            # Deploy Kubernetes manifests
+            echo "Deploying Kubernetes manifests..."
+            kubectl apply -f k8s/ --validate=true
+
+            # Wait for deployments to be ready
+            kubectl wait --for=condition=ready pods --all --timeout=300s
+
+            # Deploy Laravel application
+            cd laravel-app
+            echo "Setting up Laravel environment..."
+            cp .env.example .env
+            composer install --no-dev --optimize-autoloader
+            php artisan key:generate
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            php artisan migrate --force
+            
+            # Deploy monitoring stack
+            echo "Deploying monitoring stack..."
+            cd ../monitoring
+            kubectl apply -f k8s-prometheus/
+            kubectl apply -f k8s-grafana/
+            
+            # Verify deployments
+            kubectl get pods -A
+            echo "Deployment completed successfully!"
+          EOF
+
+      - name: Verify Deployment
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_PUBLIC_IP }} '
+            kubectl get pods -A | grep -q "Running" || exit 1
+            curl -s -o /dev/null -w "%{http_code}" localhost:80 | grep -q "200" || exit 1
+          '
+
+      - name: Notify on Success
+        if: success()
+        run: echo "Deployment completed successfully!"
+
+      - name: Notify on Failure
+        if: failure()
+        run: |
+          echo "Deployment failed!"
+          exit 1
