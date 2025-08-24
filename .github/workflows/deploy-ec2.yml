@@ -1,0 +1,64 @@
+name: Deploy to EC2 (K8s, Laravel, Monitoring)
+
+on:
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.EC2_PUBLIC_IP }} >> ~/.ssh/known_hosts
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_PUBLIC_IP }} "
+            set -e
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io php-cli unzip curl composer
+
+            # Install kubectl
+            curl -LO https://storage.googleapis.com/kubernetes-release/release/`curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt`/bin/linux/amd64/kubectl
+            sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+
+            # Install Minikube
+            curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+            sudo install minikube-linux-amd64 /usr/local/bin/minikube
+
+            # Start Minikube if not running
+            minikube status || minikube start --driver=docker
+
+            # Pull latest code
+            cd /home/ubuntu/app || git clone https://github.com/ghassan8080/DevOps-Pipeline-Monitoring.git app && cd app
+            git pull origin main
+
+            # Deploy Kubernetes manifests
+            if [ -d 'k8s' ]; then
+              kubectl apply -f k8s/
+            fi
+
+            # Deploy Laravel
+            if [ -d 'laravel-app' ]; then
+              cd laravel-app
+              composer install
+              php artisan migrate --force
+              php artisan config:cache
+              cd ..
+            fi
+
+            # Deploy Monitoring tools
+            if [ -d 'monitoring' ]; then
+              cd monitoring
+              chmod +x deploy-monitoring.sh
+              ./deploy-monitoring.sh
+              cd ..
+            fi
+          "
