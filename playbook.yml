@@ -1,5 +1,5 @@
 ---
-- name: Setup EC2 Environment
+- name: Setup EC2 Environment (Docker, Kubernetes, Laravel)
   hosts: all
   become: yes
   vars:
@@ -8,11 +8,13 @@
     php_version: "8.2"
 
   tasks:
+    # Update apt cache
     - name: Update apt cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
 
+    # Install required packages
     - name: Install required packages
       apt:
         name: "{{ item }}"
@@ -24,16 +26,28 @@
         - software-properties-common
         - python3-pip
         - git
+        - unzip
+
+    # Setup Docker repository
+    - name: Remove old Docker sources if any
+      file:
+        path: /etc/apt/sources.list.d/docker.list
+        state: absent
 
     - name: Add Docker GPG key
-      apt_key:
-        url: https://download.docker.com/linux/ubuntu/gpg
-        state: present
+      shell: |
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+      args:
+        warn: false
 
     - name: Add Docker repository
-      apt_repository:
-        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
-        state: present
+      copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+
+    - name: Update apt cache after adding Docker repo
+      apt:
+        update_cache: yes
 
     - name: Install Docker
       apt:
@@ -47,6 +61,7 @@
         state: started
         enabled: yes
 
+    # Install kubectl
     - name: Add Kubernetes GPG key
       apt_key:
         url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
@@ -57,16 +72,35 @@
         repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
         state: present
 
+    - name: Update apt cache after adding Kubernetes repo
+      apt:
+        update_cache: yes
+
     - name: Install kubectl
       apt:
         name: "kubectl={{ kubectl_version }}-00"
         state: present
-        update_cache: yes
 
+    # Install Minikube
+    - name: Install Minikube
+      shell: |
+        if ! command -v minikube > /dev/null; then
+          curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
+          sudo install minikube-linux-amd64 /usr/local/bin/minikube
+        fi
+
+    - name: Start Minikube
+      shell: minikube status || minikube start --driver=docker
+
+    # Install PHP and extensions
     - name: Add PHP repository
       apt_repository:
         repo: ppa:ondrej/php
         state: present
+
+    - name: Update apt cache after PHP repo
+      apt:
+        update_cache: yes
 
     - name: Install PHP and extensions
       apt:
@@ -82,20 +116,26 @@
         - "php{{ php_version }}-curl"
         - "php{{ php_version }}-zip"
 
+    # Install Composer
     - name: Install Composer
       shell: |
-        curl -sS https://getcomposer.org/installer | php
-        mv composer.phar /usr/local/bin/composer
-        chmod +x /usr/local/bin/composer
+        if ! command -v composer > /dev/null; then
+          curl -sS https://getcomposer.org/installer | php
+          mv composer.phar /usr/local/bin/composer
+          chmod +x /usr/local/bin/composer
+        fi
 
-    - name: Create Laravel storage directory
+    # Laravel storage
+    - name: Ensure Laravel storage directory exists
       file:
         path: /var/www/html/storage
         state: directory
+        recurse: yes
         mode: '0775'
         owner: www-data
         group: www-data
 
+    # PHP-FPM config
     - name: Configure PHP-FPM
       template:
         src: php-fpm.conf.j2
